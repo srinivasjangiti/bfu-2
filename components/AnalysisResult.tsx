@@ -559,13 +559,8 @@ export default function AnalysisResult({ analysis }: AnalysisResultProps) {
           })),
         };
         const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
         const timestamp = new Date().toISOString().split('T')[0];
-        a.download = `bookmarks-${timestamp}-${analysis.metadata.fileName}.json`;
-        a.click();
-        URL.revokeObjectURL(url);
+        safeDownload(blob, `bookmarks-${timestamp}-${analysis.metadata.fileName}.json`);
         showToast(`✓ Exported ${bookmarkedClausesList.length} bookmarks as JSON`, 'success');
       } else {
         let markdown = `# Bookmarked Clauses - ${analysis.metadata.fileName}\n\n`;
@@ -586,13 +581,8 @@ export default function AnalysisResult({ analysis }: AnalysisResultProps) {
         });
 
         const blob = new Blob([markdown], { type: 'text/markdown' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
         const timestamp = new Date().toISOString().split('T')[0];
-        a.download = `bookmarks-${timestamp}-${analysis.metadata.fileName}.md`;
-        a.click();
-        URL.revokeObjectURL(url);
+        safeDownload(blob, `bookmarks-${timestamp}-${analysis.metadata.fileName}.md`);
         showToast(`✓ Exported ${bookmarkedClausesList.length} bookmarks as Markdown`, 'success');
       }
     } catch (error) {
@@ -677,15 +667,8 @@ export default function AnalysisResult({ analysis }: AnalysisResultProps) {
     };
 
     const blob = new Blob([JSON.stringify(annotationsData, null, 2)], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
     const timestamp = new Date().toISOString().split('T')[0];
-    a.download = `annotations-${timestamp}-${analysis.metadata.fileName}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    safeDownload(blob, `annotations-${timestamp}-${analysis.metadata.fileName}.json`);
 
     showToast(`✓ Exported ${annotationsData.summary.totalHighlights} highlights and ${annotationsData.summary.totalComments} comments`, 'success');
   };
@@ -735,13 +718,8 @@ export default function AnalysisResult({ analysis }: AnalysisResultProps) {
         return;
       }
       const blob = new Blob([playbookContent], { type: 'text/markdown' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
       const timestamp = new Date().toISOString().split('T')[0];
-      a.download = `playbook-${timestamp}-${analysis.metadata.fileName}.md`;
-      a.click();
-      URL.revokeObjectURL(url);
+      safeDownload(blob, `playbook-${timestamp}-${analysis.metadata.fileName}.md`);
       showToast('✓ Playbook downloaded successfully!', 'success');
     } catch (error) {
       console.error('Download error:', error);
@@ -801,13 +779,8 @@ export default function AnalysisResult({ analysis }: AnalysisResultProps) {
       }
 
       if (blob) {
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
         const timestamp = new Date().toISOString().split('T')[0];
-        a.download = `analysis-${timestamp}-${analysis.metadata.fileName}.${extension}`;
-        a.click();
-        URL.revokeObjectURL(url);
+        safeDownload(blob, `analysis-${timestamp}-${analysis.metadata.fileName}.${extension}`);
       }
 
       showToast(`✓ Successfully exported as ${exportFormat.toUpperCase()}`, 'success');
@@ -2280,13 +2253,8 @@ export default function AnalysisResult({ analysis }: AnalysisResultProps) {
                       };
                       
                       const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-                      const url = URL.createObjectURL(blob);
-                      const a = document.createElement('a');
-                      a.href = url;
                       const timestamp = new Date().toISOString().split('T')[0];
-                      a.download = `annotations-${timestamp}-${analysis.metadata.fileName}.json`;
-                      a.click();
-                      URL.revokeObjectURL(url);
+                      safeDownload(blob, `annotations-${timestamp}-${analysis.metadata.fileName}.json`);
                       showToast(`✓ Exported ${exportData.annotations.length} annotations`, 'success');
                     }}
                     className="text-xs text-purple-600 hover:text-purple-800 font-medium flex items-center gap-1 border border-purple-300 px-2 py-1 rounded hover:bg-purple-50 transition-colors"

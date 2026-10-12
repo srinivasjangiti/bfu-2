@@ -13,7 +13,10 @@ const eslintConfig = defineConfig([
     "build/**",
     "next-env.d.ts",
     "browser-extension/**",
-    "pdf-engine-reference/**"
+    "pdf-engine-reference/**",
+    "public/**",
+    "scripts/**",
+    "tmp*/**"
   ]),
   {
     rules: {

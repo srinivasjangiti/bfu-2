@@ -10,7 +10,7 @@ import { Document, Packer, Paragraph, TextRun, HeadingLevel, AlignmentType } fro
 /**
  * Convert Markdown-style text to plain text for export
  */
-function markdownToPlainText(markdown: string): string {
+export function markdownToPlainText(markdown: string): string {
   return markdown
     // Remove markdown headers
     .replace(/^#{1,6}\s+/gm, '')

@@ -13,7 +13,7 @@
       "maxDuration": 60
     },
     "app/api/drafting/route.ts": {
-      "maxDuration": 60
+      "maxDuration": 90
     }
   }
 }

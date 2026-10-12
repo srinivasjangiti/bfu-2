@@ -4,10 +4,52 @@ import { NextRequest } from 'next/server';
 import { DocumentParser } from '@/lib/document-parser';
 import { ContractAnalyzer } from '@/lib/contract-analyzer';
 import { validateContractFile, sanitizeInput } from '@/lib/security';
-import { createNvidiaClient, NVIDIA_MODELS, parseJsonResponse } from '@/lib/nvidia-client';
+import { createNvidiaClient, NVIDIA_MODELS, parseJsonResponse, NvidiaError, safeGenerate } from '@/lib/nvidia-client';
 import { PrismaClient } from '@prisma/client';
 
 import { prisma } from "@/lib/prisma";
+
+/**
+ * Map an arbitrary error coming out of the streaming chat call to a safe,
+ * user-facing message. The full error is logged server-side, the browser
+ * only ever sees a short sentence + a stable error code.
+ */
+function classifyStreamError(err: unknown): { message: string; code: string } {
+  if (err instanceof NvidiaError) {
+    switch (err.kind) {
+      case 'missing_credentials':
+        return { message: 'AI service is not configured on the server.', code: 'ai_unconfigured' };
+      case 'auth':
+        return { message: 'AI service credentials were rejected.', code: 'ai_unauthorized' };
+      case 'invalid_request':
+        return { message: 'The request was rejected by the AI provider.', code: 'ai_invalid_request' };
+      case 'rate_limited':
+        return { message: 'AI service is rate-limited; please retry shortly.', code: 'ai_rate_limited' };
+      case 'timeout':
+        return { message: 'AI service timed out; please retry.', code: 'ai_timeout' };
+      case 'empty_response':
+        return { message: 'AI returned an empty response; please retry.', code: 'ai_empty' };
+      case 'model_unavailable':
+        return {
+          message:
+            'The configured AI model is no longer available on the provider. Please update the model id or rotate NVIDIA_MODEL to a supported one.',
+          code: 'ai_model_unavailable',
+        };
+      case 'upstream':
+      default:
+        return { message: 'AI provider is currently unavailable; please retry.', code: 'ai_upstream' };
+    }
+  }
+  const status = (err as { status?: number })?.status;
+  if (status === 404 || status === 410) {
+    return {
+      message:
+        'The configured AI model is no longer available on the provider. Please update the model id or rotate NVIDIA_MODEL to a supported one.',
+      code: 'ai_model_unavailable',
+    };
+  }
+  return { message: 'Failed to analyze contract; please retry.', code: 'internal' };
+}
 
 /**
  * Validates the parsed AI JSON response against the expected domain schema.
@@ -134,25 +176,23 @@ export async function POST(request: NextRequest) {
           : contractText;
         const prompt = ContractAnalyzer.buildAnalysisPrompt(trimmedText, jurisdiction);
 
-        // Step 3: Stream response from NVIDIA NIM
+        // Step 3: Call NVIDIA NIM (non-streaming via safeGenerate)
+        // safeGenerate already handles skip_reasoning, reasoning_content
+        // extraction, retries with exponential backoff, and model fallback.
+        // We still send SSE progress events for UX and deliver the full
+        // parsed analysis in one piece at the end.
         send({ type: 'status', message: 'AI is analyzing your contract...' });
-        const client = createNvidiaClient();
-        const nvStream = await client.chat.completions.create({
-          model: NVIDIA_MODELS.fast,
-          messages: [{ role: 'user', content: prompt }],
-          temperature: 0.3,
-          max_tokens: maxTokens,
-          stream: true,
-        });
-
-        let fullText = '';
-        for await (const chunk of nvStream) {
-          const content = chunk.choices[0]?.delta?.content || '';
-          if (content) {
-            fullText += content;
-            send({ type: 'chunk', content });
-          }
-        }
+        const result = await safeGenerate(
+          [{ role: 'user', content: prompt }],
+          {
+            model: NVIDIA_MODELS.fast,
+            temperature: 0.3,
+            maxTokens,
+            jsonMode: true,
+            maxAttempts: 3,
+          },
+        );
+        const fullText = result.text;
 
         // Step 4: Parse full JSON and send structured analysis
         send({ type: 'status', message: 'Finalizing analysis...' });
@@ -180,8 +220,22 @@ export async function POST(request: NextRequest) {
         controller.close();
 
       } catch (error) {
-        const message = error instanceof Error ? error.message : 'Failed to analyze contract';
-        send({ type: 'error', error: message, requestId });
+        const classified = classifyStreamError(error);
+        // Log the full error server-side (stack + status + message) and a
+        // safe classification in the SSE so the user sees something
+        // actionable. Never expose raw provider internals.
+        if (error instanceof NvidiaError) {
+          console.error('[analyze] AI error', {
+            kind: error.kind,
+            model: error.model,
+            status: error.status,
+            message: error.message,
+            requestId,
+          });
+        } else {
+          console.error('[analyze] unexpected error', { error, requestId });
+        }
+        send({ type: 'error', error: classified.message, code: classified.code, requestId });
         try { controller.close(); } catch { /* already closed */ }
       }
     },

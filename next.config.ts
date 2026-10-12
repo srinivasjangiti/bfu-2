@@ -29,6 +29,7 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  serverExternalPackages: ["@napi-rs/canvas", "sharp", "pdfjs-dist", "mupdf", "tesseract.js"],
   reactCompiler: true,
   compress: true,
   poweredByHeader: false,

@@ -90,6 +90,78 @@ export default function AIContractDrafterComponent() {
     }
   };
 
+  const [downloading, setDownloading] = useState(false);
+
+  const getContractMarkdown = () => {
+    if (!draftedContract) return '';
+    const title = draftedContract.title || contractType;
+    let md = `# ${title}\n\n`;
+    if (draftedContract.preamble) {
+      md += `${draftedContract.preamble}\n\n`;
+    }
+    if (draftedContract.sections && draftedContract.sections.length > 0) {
+      for (const section of draftedContract.sections) {
+        md += `## Section ${section.number}: ${section.title}\n\n${section.content}\n\n`;
+      }
+    } else if (draftedContract.fullText) {
+      md += `${draftedContract.fullText}\n\n`;
+    }
+
+    md += `## Signatures\n\n`;
+    md += `IN WITNESS WHEREOF, the parties hereto have executed this Agreement as of the Effective Date.\n\n`;
+    md += `**Party 1 (${yourCompany || 'Provider'}):**\nSignature: ___________________________\nName: _______________________________\nTitle: ________________________________\nDate: _________________________________\n\n`;
+    md += `**Party 2 (${theirCompany || 'Customer'}):**\nSignature: ___________________________\nName: _______________________________\nTitle: ________________________________\nDate: _________________________________\n\n`;
+
+    return md;
+  };
+
+  const handleDownloadPDF = async () => {
+    if (!draftedContract) return;
+    setDownloading(true);
+    try {
+      const { exportAsPDF } = await import('@/lib/export-utils');
+      const md = getContractMarkdown();
+      const title = draftedContract.title || contractType;
+      await exportAsPDF(title, md);
+    } catch (e) {
+      console.error('Failed to export PDF:', e);
+      handleDownloadTXT();
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const handleDownloadDOCX = async () => {
+    if (!draftedContract) return;
+    setDownloading(true);
+    try {
+      const { exportAsDOCX } = await import('@/lib/export-utils');
+      const md = getContractMarkdown();
+      const title = draftedContract.title || contractType;
+      await exportAsDOCX(title, md);
+    } catch (e) {
+      console.error('Failed to export DOCX:', e);
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  const handleDownloadTXT = async () => {
+    if (!draftedContract) return;
+    try {
+      const { markdownToPlainText } = await import('@/lib/export-utils');
+      const md = getContractMarkdown();
+      const plain = markdownToPlainText(md);
+      const title = draftedContract.title || contractType;
+      const blob = new Blob([plain], { type: 'text/plain;charset=utf-8' });
+      safeDownload(blob, `${title.replace(/\s+/g, '-')}.txt`);
+    } catch {
+      const title = draftedContract.title || contractType;
+      const blob = new Blob([draftedContract.fullText || ''], { type: 'text/plain;charset=utf-8' });
+      safeDownload(blob, `${title.replace(/\s+/g, '-')}.txt`);
+    }
+  };
+
   const handleGenerateVariations = async () => {
     if (!draftedContract) return;
     setLoading(true);
@@ -324,29 +396,47 @@ export default function AIContractDrafterComponent() {
           )}
 
           {/* Actions */}
-          <div className="flex gap-4">
-            <button
-              onClick={() => {
-                const blob = new Blob([draftedContract.fullText], { type: 'text/plain' });
-                safeDownload(blob, `${contractType.replace(/\s+/g, '-')}.txt`);}}
-              className="flex-1 bg-stone-900 text-white py-3 px-6 font-semibold hover:bg-stone-800 transition-all duration-300 uppercase tracking-wide"
-            >
-              📥 Download Contract
-            </button>
-            <button
-              onClick={() => {
-                setStep('input');
-                setDraftedContract(null);
-              }}
-              className="flex-1 bg-stone-100 border-2 border-stone-900 text-stone-900 py-3 px-6 font-semibold hover:bg-stone-200 transition-all duration-300 uppercase tracking-wide"
-            >
-              ✏️ Draft New Contract
-            </button>
-            <button
-              className="flex-1 bg-green-600 text-white py-3 px-6 font-semibold hover:bg-green-700 transition-all duration-300 uppercase tracking-wide"
-            >
-              ✍️ Send for Signature
-            </button>
+          <div className="space-y-4">
+            <div className="flex flex-wrap gap-4">
+              <button
+                onClick={handleDownloadPDF}
+                disabled={downloading}
+                className="flex-1 bg-stone-900 text-white py-3.5 px-6 font-semibold hover:bg-stone-800 transition-all duration-300 uppercase tracking-wide flex items-center justify-center gap-2 cursor-pointer shadow-sm disabled:opacity-50"
+              >
+                {downloading ? '⏳ Generating PDF...' : '📥 Download PDF (.pdf)'}
+              </button>
+              <button
+                onClick={handleDownloadDOCX}
+                disabled={downloading}
+                className="bg-stone-800 text-white py-3.5 px-6 font-semibold hover:bg-stone-700 transition-all duration-300 uppercase tracking-wide flex items-center justify-center gap-2 cursor-pointer disabled:opacity-50"
+              >
+                📄 Word (.docx)
+              </button>
+              <button
+                onClick={handleDownloadTXT}
+                disabled={downloading}
+                className="bg-stone-100 border-2 border-stone-300 text-stone-700 py-3.5 px-5 font-semibold hover:bg-stone-200 transition-all duration-300 uppercase tracking-wide cursor-pointer disabled:opacity-50"
+              >
+                TXT
+              </button>
+            </div>
+
+            <div className="flex gap-4">
+              <button
+                onClick={() => {
+                  setStep('input');
+                  setDraftedContract(null);
+                }}
+                className="flex-1 bg-white border-2 border-stone-900 text-stone-900 py-3 px-6 font-semibold hover:bg-stone-100 transition-all duration-300 uppercase tracking-wide cursor-pointer"
+              >
+                ✏️ Draft New Contract
+              </button>
+              <button
+                className="flex-1 bg-green-600 text-white py-3 px-6 font-semibold hover:bg-green-700 transition-all duration-300 uppercase tracking-wide cursor-pointer"
+              >
+                ✍️ Send for Signature
+              </button>
+            </div>
           </div>
         </div>
       )}

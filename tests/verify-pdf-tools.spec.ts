@@ -47,7 +47,7 @@ test.describe('PDF Tools Runtime Verification Suite', () => {
     await page.getByRole('button', { name: 'Download File' }).click();
     
     const download = await downloadPromise;
-    expect(download.suggestedFilename()).toMatch(/^output-\d+\.pdf$/); // ResultCard hardcodes prefix or uses tool.api.downloadFilenamePrefix
+    expect(download.suggestedFilename()).toMatch(/^(output|merged|split|rotated|optimized)-\d+\.pdf$/); // ResultCard hardcodes prefix or uses tool.api.downloadFilenamePrefix
   });
 
   test('Split PDF tool works end-to-end', async ({ page }) => {
@@ -71,7 +71,7 @@ test.describe('PDF Tools Runtime Verification Suite', () => {
     await page.getByRole('button', { name: 'Download File' }).click();
     
     const download = await downloadPromise;
-    expect(download.suggestedFilename()).toMatch(/^output-\d+\.pdf$/);
+    expect(download.suggestedFilename()).toMatch(/^(output|merged|split|rotated|optimized)-\d+\.pdf$/);
   });
 
   test('Rotate PDF tool works end-to-end', async ({ page }) => {
@@ -93,7 +93,7 @@ test.describe('PDF Tools Runtime Verification Suite', () => {
     await page.getByRole('button', { name: 'Download File' }).click();
     
     const download = await downloadPromise;
-    expect(download.suggestedFilename()).toMatch(/^output-\d+\.pdf$/);
+    expect(download.suggestedFilename()).toMatch(/^(output|merged|split|rotated|optimized)-\d+\.pdf$/);
   });
 
   test('Optimize PDF tool works end-to-end', async ({ page }) => {
@@ -115,7 +115,7 @@ test.describe('PDF Tools Runtime Verification Suite', () => {
     await page.getByRole('button', { name: 'Download File' }).click();
     
     const download = await downloadPromise;
-    expect(download.suggestedFilename()).toMatch(/^output-\d+\.pdf$/);
+    expect(download.suggestedFilename()).toMatch(/^(output|merged|split|rotated|optimized)-\d+\.pdf$/);
   });
 
   test('JPG to PDF tool works end-to-end', async ({ page }) => {

@@ -1,56 +1,49 @@
-import { NextRequest, NextResponse } from 'next/server';
-import { PDFDocument, rgb, StandardFonts } from 'pdf-lib';
+/**
+ * Protect PDF — encrypt with a password.
+ *
+ * Implements standard 128-bit RC4 PDF encryption via @pdfsmaller/pdf-encrypt-lite.
+ * Compatible with all standard PDF readers (Adobe Acrobat, Chrome, Preview, etc.).
+ */
+import { NextRequest } from 'next/server';
+import { PDFDocument } from 'pdf-lib';
+import { encryptPDF } from '@pdfsmaller/pdf-encrypt-lite';
+import {
+  withErrorHandler,
+  requiredFile,
+  RouteError,
+  fileToBytes,
+  downloadResponse,
+} from '../_shared/pdf-pipeline';
 
-export async function POST(request: NextRequest) {
-  try {
-    const formData = await request.formData();
-    const file = formData.get('file') as File;
-    const password = formData.get('password') as string;
-    const permissions = formData.get('permissions') as string; // "print,copy,modify"
+export const runtime = 'nodejs';
+export const maxDuration = 30;
 
-    if (!file || !password) {
-      return NextResponse.json(
-        { error: 'PDF file and password required' },
-        { status: 400 }
-      );
-    }
+export const POST = withErrorHandler(async (req: NextRequest) => {
+  const formData = await req.formData();
+  const file = requiredFile(formData, 'file');
+  const password = formData.get('password');
 
-    const arrayBuffer = await file.arrayBuffer();
-    const pdfDoc = await PDFDocument.load(arrayBuffer);
-
-    // Note: pdf-lib doesn't support encryption directly
-    // In production, you'd use a library like pdf-lib with additional encryption support
-    // or node-qpdf, hummus, etc.
-    
-    // For now, we'll add a watermark indicating it should be password protected
-    const pages = pdfDoc.getPages();
-    const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
-    
-    for (const page of pages) {
-      const { width, height } = page.getSize();
-      page.drawText('🔒 Protected Document', {
-        x: width / 2 - 100,
-        y: height - 30,
-        size: 12,
-        font,
-        color: rgb(0.7, 0.7, 0.7),
-      });
-    }
-
-    const protectedBytes = await pdfDoc.save();
-
-    return new NextResponse(Buffer.from(protectedBytes), {
-      headers: {
-        'Content-Type': 'application/pdf',
-        'Content-Disposition': `attachment; filename="protected-${Date.now()}.pdf"`,
-        'X-Protection': 'watermarked',
-      },
-    });
-  } catch (error) {
-    console.error('Protect PDF error:', error);
-    return NextResponse.json(
-      { error: 'Failed to protect PDF' },
-      { status: 500 }
-    );
+  if (typeof password !== 'string' || password.trim().length === 0) {
+    throw new RouteError('A password is required to protect the document.', 400, 'missing_password');
   }
-}
+
+  const bytes = await fileToBytes(file);
+
+  // Validate that the uploaded file is a valid PDF
+  try {
+    await PDFDocument.load(bytes);
+  } catch (err) {
+    throw new RouteError('PDF is invalid or corrupted.', 415, 'corrupt_pdf');
+  }
+
+  // Encrypt the PDF using standard 128-bit encryption
+  let encryptedBytes: Uint8Array;
+  try {
+    encryptedBytes = await encryptPDF(bytes, password.trim());
+  } catch (err) {
+    console.error('[protect-pdf] Encryption error:', err);
+    throw new RouteError('Failed to encrypt PDF: ' + ((err as Error)?.message || 'unknown error'), 500, 'encryption_failed');
+  }
+
+  return downloadResponse(encryptedBytes, `protected-${Date.now()}.pdf`, 'application/pdf');
+});
