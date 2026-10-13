@@ -70,8 +70,12 @@ export function Workspace({ tool, step, setStep, onBack }: WorkspaceProps) {
       
       if (tool.capabilities.upload.multiple) {
         selectedFiles.forEach(f => formData.append('files', f));
+        if (selectedFiles[0]) {
+          formData.append('file', selectedFiles[0]);
+        }
       } else {
         formData.append('file', selectedFiles[0]);
+        formData.append('files', selectedFiles[0]);
       }
 
       // Append dynamic options

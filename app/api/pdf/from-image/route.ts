@@ -16,7 +16,13 @@ export const dynamic = 'force-dynamic';
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
-    const rawFiles = formData.getAll('files') as File[];
+    let rawFiles = formData.getAll('files') as File[];
+    if (rawFiles.length === 0) {
+      const single = formData.get('file');
+      if (single instanceof File) {
+        rawFiles = [single];
+      }
+    }
     const pageSize = formData.get('pageSize') as string || 'A4';
     const format = pageSize.toLowerCase() === 'letter' ? 'Letter' : 'A4';
 

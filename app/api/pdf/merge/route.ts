@@ -15,7 +15,13 @@ const consoleLogger: PDFLogger = {
 export async function POST(request: NextRequest) {
   try {
     const formData = await request.formData();
-    const rawFiles = formData.getAll('files') as File[];
+    let rawFiles = formData.getAll('files') as File[];
+    if (rawFiles.length === 0) {
+      const single = formData.get('file');
+      if (single instanceof File) {
+        rawFiles = [single];
+      }
+    }
 
     // Extract options
     const sortType = (formData.get('sortType') as MergeOptions['sortType']) || 'orderProvided';
