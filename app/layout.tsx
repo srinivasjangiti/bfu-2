@@ -94,6 +94,10 @@ export const viewport: import("next").Viewport = {
   themeColor: "#1c1917",
 };
 
+const CLERK_PUBLISHABLE_KEY =
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY ||
+  "pk_test_cG9saXRlLXJpbmd0YWlsLTQzNDAuY2xlcmsuYWNjb3VudHMuZGV2JA";
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -127,7 +131,7 @@ export default function RootLayout({
         <JsonLd data={softwareApplicationSchema()} />
       </head>
       <body className="antialiased">
-        <ClerkProvider>
+        <ClerkProvider publishableKey={CLERK_PUBLISHABLE_KEY}>
           <ToastProvider>
             <ErrorBoundary>
               <Navbar />

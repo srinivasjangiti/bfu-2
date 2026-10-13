@@ -1,15 +1,10 @@
 /**
- * PDF → DOCX.
+ * PDF → DOCX (PDF to Word Document).
  *
- * We use pdf-parse to read the text in reading order, then build a
- * DOCX with the `docx` library. Headings are inferred from the PDF's
- * font-size metadata when available; otherwise text is split into
- * paragraphs at blank lines.
- *
- * Honest caveat: this produces an editable, structured DOCX with
- * paragraphs and headings — but it does NOT recreate the original
- * layout pixel-perfectly. Layout-faithful PDF→DOCX conversion is a
- * decades-old unsolved problem in pure JS (no native renderer).
+ * Extracts text and line structure from PDF pages via pdfjs-dist.
+ * Converts headings, bullet lists, and paragraphs into real Word
+ * elements using the docx library. If the PDF is image-only/scanned,
+ * automatically falls back to OCR to extract text.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import {
@@ -29,7 +24,7 @@ import {
 } from '../_shared/pdf-pipeline';
 
 export const runtime = 'nodejs';
-export const maxDuration = 60;
+export const maxDuration = 120;
 
 export const POST = withErrorHandler(async (req: NextRequest): Promise<NextResponse> => {
   const formData = await req.formData();
@@ -44,6 +39,49 @@ export const POST = withErrorHandler(async (req: NextRequest): Promise<NextRespo
     throw new RouteError('PDF is invalid or corrupted.', 415, 'corrupt_pdf');
   }
 
+  // Fallback to OCR if PDF has no extractable text (e.g. scanned document)
+  if (!parsed.text || parsed.text.trim().length === 0) {
+    try {
+      const { createWorker } = await import('tesseract.js');
+      const { createCanvas } = await import('@napi-rs/canvas');
+      const pdfjs = await import('pdfjs-dist/legacy/build/pdf.mjs');
+      const pdf = await (pdfjs as any).getDocument({
+        data: bytes,
+        isEvalSupported: false,
+        disableFontFace: true,
+      }).promise;
+
+      const worker = await createWorker('eng');
+      const ocrPages = [];
+      const pageCount = Math.min(pdf.numPages, 10);
+
+      for (let i = 1; i <= pageCount; i += 1) {
+        const page = await pdf.getPage(i);
+        const vp = page.getViewport({ scale: 2.0 });
+        const canvas = createCanvas(vp.width, vp.height);
+        const ctx = canvas.getContext('2d');
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, vp.width, vp.height);
+        await page.render({ canvasContext: ctx as any, viewport: vp, canvas: canvas as any }).promise;
+        const imgBuf = canvas.toBuffer('image/png');
+        const res = await worker.recognize(imgBuf);
+        const lines = (res.data?.text || '').split(/\r?\n/).filter((l: string) => l.trim().length > 0);
+        ocrPages.push({ num: i, text: lines.join('\n'), lines });
+      }
+      await worker.terminate();
+
+      if (ocrPages.length > 0) {
+        parsed = {
+          text: ocrPages.map(p => p.text).join('\n\n'),
+          pageCount,
+          pages: ocrPages,
+        };
+      }
+    } catch (ocrErr) {
+      console.warn('[pdf-to-word] OCR fallback failed:', ocrErr);
+    }
+  }
+
   if (!parsed.text || parsed.text.trim().length === 0) {
     throw new RouteError(
       'No extractable text was found in the PDF.',
@@ -52,9 +90,9 @@ export const POST = withErrorHandler(async (req: NextRequest): Promise<NextRespo
     );
   }
 
-  // Promote any line that LOOKS like a heading into a real DOCX heading.
   const pages = parsed.pages;
   const children: Paragraph[] = [];
+
   pages.forEach((p, idx) => {
     if (idx > 0 && includePageBreaks) {
       children.push(new Paragraph({ children: [new PageBreak()] }));
@@ -63,11 +101,38 @@ export const POST = withErrorHandler(async (req: NextRequest): Promise<NextRespo
     for (const line of lines) {
       const trimmed = line.trim();
       if (trimmed.length === 0) continue;
-      // Heading heuristic: short ALL-CAPS line or section/article marker.
-      const isLikelyHeading =
+
+      // Bullet item detection (•, -, *, 1.)
+      const bulletMatch = trimmed.match(/^[\u2022\-\*\u25AA\u25CF]\s+(.+)$/);
+      if (bulletMatch) {
+        children.push(
+          new Paragraph({
+            text: bulletMatch[1],
+            bullet: { level: 0 },
+            spacing: { before: 60, after: 60 },
+          }),
+        );
+        continue;
+      }
+
+      // Major Title detection (short ALL-CAPS line)
+      if (trimmed.length < 60 && trimmed === trimmed.toUpperCase() && !/[0-9]/.test(trimmed)) {
+        children.push(
+          new Paragraph({
+            text: trimmed,
+            heading: HeadingLevel.HEADING_1,
+            spacing: { before: 280, after: 140 },
+          }),
+        );
+        continue;
+      }
+
+      // Section / Clause Heading heuristic
+      const isLikelySectionHeading =
         trimmed.length < 90 &&
-        (trimmed === trimmed.toUpperCase() || /^(section|article|clause|chapter|part)\b/i.test(trimmed));
-      if (isLikelyHeading) {
+        (/^(section|article|clause|chapter|part|\d+\.)\b/i.test(trimmed) || trimmed === trimmed.toUpperCase());
+
+      if (isLikelySectionHeading) {
         children.push(
           new Paragraph({
             text: trimmed,

@@ -1,15 +1,10 @@
 /**
- * PDF → XLSX.
+ * PDF → XLSX (Excel Spreadsheet).
  *
- * pdf-parse gives us text in reading order; we attempt a heuristic
- * table detector (rows = same y-coord, cells = x-coord columns) and
- * emit an XLSX with one sheet per detected table. If no tables are
- * detected we fall back to a single "Text" sheet with the full text
- * — still a real, openable spreadsheet.
- *
- * Honest caveat: PDF→XLSX table extraction is genuinely hard in
- * pure JS. This is best-effort, not a substitute for Adobe Acrobat
- * or a paid OCR/extraction service.
+ * Extracts text from PDF pages, detects table rows and columns using
+ * tab, pipe, multi-space, and CSV-like delimiters, parses numbers/currencies
+ * into real Excel numeric cells, auto-sizes column widths, and produces
+ * a structured, openable XLSX workbook.
  */
 import { NextRequest, NextResponse } from 'next/server';
 import ExcelJS from 'exceljs';
@@ -23,6 +18,46 @@ import {
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
+
+function parseCellValue(str: string): string | number {
+  const trimmed = str.trim();
+  if (!trimmed) return '';
+
+  // Clean currency and comma separators: $1,234.50 or €99.00
+  const clean = trimmed.replace(/^[\$€£₹¥]/, '').replace(/,/g, '');
+  if (clean && !isNaN(Number(clean)) && !/^[0-9]+-[0-9]+/.test(trimmed)) {
+    return Number(clean);
+  }
+  return trimmed;
+}
+
+function splitLineIntoCells(line: string): (string | number)[] {
+  const trimmed = line.trim();
+  if (!trimmed) return [];
+
+  // Tab delimited
+  if (trimmed.includes('\t')) {
+    return trimmed.split('\t').map(c => parseCellValue(c)).filter(c => c !== '');
+  }
+
+  // Pipe delimited (| Col 1 | Col 2 |)
+  if (trimmed.includes('|')) {
+    const parts = trimmed.split('|').map(c => parseCellValue(c)).filter(c => c !== '');
+    if (parts.length > 0) return parts;
+  }
+
+  // Multi-space delimited (2 or more spaces between columns)
+  if (/\s{2,}/.test(trimmed)) {
+    return trimmed.split(/\s{2,}/).map(c => parseCellValue(c)).filter(c => c !== '');
+  }
+
+  // Comma delimited (if line has at least 2 commas with data)
+  if (trimmed.includes(',') && /^[^,]+,\s*[^,]+,\s*[^,]+/.test(trimmed)) {
+    return trimmed.split(',').map(c => parseCellValue(c)).filter(c => c !== '');
+  }
+
+  return [parseCellValue(trimmed)];
+}
 
 export const POST = withErrorHandler(async (req: NextRequest): Promise<NextResponse> => {
   const formData = await req.formData();
@@ -44,26 +79,69 @@ export const POST = withErrorHandler(async (req: NextRequest): Promise<NextRespo
   workbook.creator = 'BeforeYouSign PDF Tools';
   workbook.created = new Date();
 
-  // Sheet 1: detected tables (best-effort). New pdf-parse API doesn't
-  // expose positional data via getText, so we just paginate.
+  // Sheet 1: Structured Tables / By Page
+  const sheet = workbook.addWorksheet('Extracted Tables', {
+    views: [{ showGridLines: true }],
+  });
+
   if (Array.isArray(parsed.pages) && parsed.pages.length > 0) {
-    const sheet = workbook.addWorksheet('By Page');
     for (const p of parsed.pages) {
-      sheet.addRow([`— Page ${p.num} —`]).font = { bold: true };
-      for (const line of (p.text || '').split(/\r?\n/)) {
-        if (line.trim().length > 0) sheet.addRow([line]);
+      // Page header banner
+      const bannerRow = sheet.addRow([`Page ${p.num}`]);
+      bannerRow.font = { bold: true, color: { argb: 'FFFFFFFF' } };
+      bannerRow.fill = {
+        type: 'pattern',
+        pattern: 'solid',
+        fgColor: { argb: 'FF1E293B' }, // Slate 800
+      };
+
+      const lines = (p.text || '').split(/\r?\n/);
+      let isFirstTableLine = true;
+
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const cells = splitLineIntoCells(line);
+        if (cells.length === 0) continue;
+
+        const row = sheet.addRow(cells);
+
+        // Highlight likely header row
+        if (cells.length > 1 && isFirstTableLine) {
+          row.font = { bold: true };
+          row.fill = {
+            type: 'pattern',
+            pattern: 'solid',
+            fgColor: { argb: 'FFF1F5F9' }, // Slate 100
+          };
+          isFirstTableLine = false;
+        }
       }
-      sheet.addRow([]);
+
+      sheet.addRow([]); // Blank spacer row between pages
+    }
+
+    // Auto-calculate column widths
+    sheet.columns.forEach(column => {
+      let maxLen = 10;
+      column.eachCell?.({ includeEmpty: false }, cell => {
+        const valStr = String(cell.value ?? '');
+        if (valStr.length > maxLen) {
+          maxLen = Math.min(valStr.length, 60);
+        }
+      });
+      column.width = Math.max(maxLen + 3, 12);
+    });
+  }
+
+  // Sheet 2: Raw Full Text backup
+  const textSheet = workbook.addWorksheet('Full Text');
+  const textLines = parsed.text.split(/\r?\n/);
+  for (const line of textLines) {
+    if (line.trim().length > 0) {
+      textSheet.addRow([line]);
     }
   }
-
-  // Sheet 2: full text.
-  const textSheet = workbook.addWorksheet('Full Text');
-  textSheet.addRow([parsed.text]);
-
-  if (workbook.worksheets.length === 0) {
-    throw new RouteError('No extractable content found in PDF.', 422, 'no_content');
-  }
+  textSheet.getColumn(1).width = 80;
 
   const buf = await workbook.xlsx.writeBuffer();
   const ab = buf instanceof ArrayBuffer ? buf : (buf as Uint8Array).buffer;

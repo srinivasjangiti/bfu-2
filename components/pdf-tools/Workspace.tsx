@@ -23,11 +23,13 @@ export function Workspace({ tool, step, setStep, onBack }: WorkspaceProps) {
   
   // Progress states: 'preparing', 'uploading', 'processing', 'downloading', 'complete'
   const [progressStage, setProgressStage] = useState('preparing');
+  const [resultFilename, setResultFilename] = useState<string | null>(null);
 
   useEffect(() => {
     // When tool changes, reset state
     setSelectedFiles([]);
     setResultBlob(null);
+    setResultFilename(null);
     setErrorMsg(null);
     setStep('upload');
     
@@ -100,12 +102,16 @@ export function Workspace({ tool, step, setStep, onBack }: WorkspaceProps) {
       setProgressStage('downloading');
       
       if (tool.capabilities.api.responseType === 'blob') {
+        const disposition = response.headers.get('content-disposition');
+        let filename: string | null = null;
+        if (disposition) {
+          const match = disposition.match(/filename\*?=(?:UTF-8'')?["']?([^"';\n]+)["']?/i);
+          if (match?.[1]) {
+            filename = decodeURIComponent(match[1].trim());
+          }
+        }
+        setResultFilename(filename);
         const blob = await response.blob();
-        
-        // Ensure we preserve headers if possible, but JS fetch can't read X-Original-Size due to CORS usually, 
-        // however since this is same-origin, we could read it if we wanted. 
-        // For now, the blob size is good enough for the result card.
-        
         setResultBlob(blob);
         setProgressStage('complete');
         setStep('result');
@@ -127,6 +133,7 @@ export function Workspace({ tool, step, setStep, onBack }: WorkspaceProps) {
   const handleProcessAnother = () => {
     setSelectedFiles([]);
     setResultBlob(null);
+    setResultFilename(null);
     setErrorMsg(null);
     setStep('upload');
   };
@@ -251,6 +258,7 @@ export function Workspace({ tool, step, setStep, onBack }: WorkspaceProps) {
               <ResultCard 
                 tool={tool} 
                 blob={resultBlob}
+                serverFilename={resultFilename || undefined}
                 onReset={onBack} 
                 onProcessAnother={handleProcessAnother} 
               />

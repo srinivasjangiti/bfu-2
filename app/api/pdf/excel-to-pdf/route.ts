@@ -1,10 +1,10 @@
 /**
- * XLSX → PDF.
+ * XLSX → PDF (Excel Spreadsheet to PDF).
  *
- * exceljs reads the workbook; we render each sheet as a paginated PDF
- * with a simple table layout. Formula results, conditional formatting,
- * charts, and merged cells are not preserved — the focus is producing
- * a printable PDF that contains the actual data.
+ * Reads workbooks via ExcelJS, dynamically computes column widths based
+ * on content, automatically switches to Landscape for wide sheets (>5 cols),
+ * draws professional table gridlines, zebra striping, headers, and
+ * page numbers.
  */
 import { NextRequest } from 'next/server';
 import ExcelJS from 'exceljs';
@@ -26,24 +26,20 @@ export const runtime = 'nodejs';
 export const maxDuration = 60;
 
 const MARGIN = 36;
-const ROW_HEIGHT = 16;
-const COL_PADDING = 6;
-const FONT_SIZE = 9;
-const HEADER_FONT_SIZE = 11;
+const ROW_HEIGHT = 18;
+const FONT_SIZE = 8.5;
+const HEADER_FONT_SIZE = 9.5;
 const TITLE_FONT_SIZE = 14;
 
 export const POST = withErrorHandler(async (req: NextRequest) => {
   const formData = await req.formData();
   const file = requiredFile(formData, 'file');
-  const maxCols = Math.min(40, parseInt((formData.get('maxCols') as string) || '20', 10));
+  const maxCols = Math.min(40, parseInt((formData.get('maxCols') as string) || '25', 10));
   const maxRows = Math.min(5000, parseInt((formData.get('maxRows') as string) || '1000', 10));
 
   const bytes = await fileToBytes(file);
   const wb = new ExcelJS.Workbook();
   try {
-    // exceljs's typings expect a Node Buffer, but our bytes are a
-    // Uint8Array<ArrayBufferLike>. The runtime accepts both; we cast
-    // through unknown to bypass the strict lib check.
     await wb.xlsx.load(bytes as unknown as ArrayBuffer);
   } catch {
     throw new RouteError('XLSX is invalid or corrupted.', 415, 'corrupt_xlsx');
@@ -55,60 +51,154 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const [pageW, pageH] = PageSizes.Letter;
-  const usableW = pageW - 2 * MARGIN;
 
   for (const sheet of wb.worksheets) {
+    const rawCols = sheet.columnCount || 0;
+    const cols = Math.min(rawCols, maxCols);
+    if (cols === 0 || sheet.rowCount === 0) continue;
+
+    // Use Landscape for tables with more than 5 columns
+    const isLandscape = cols > 5;
+    const [pageW, pageH] = isLandscape
+      ? [PageSizes.Letter[1], PageSizes.Letter[0]] // 792 x 612
+      : [PageSizes.Letter[0], PageSizes.Letter[1]]; // 612 x 792
+    const usableW = pageW - 2 * MARGIN;
+
+    // Estimate column widths based on content
+    const colCharLengths: number[] = new Array(cols).fill(5);
+    sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
+      if (rowNumber > 30) return; // Sample first 30 rows
+      for (let c = 1; c <= cols; c += 1) {
+        const val = row.getCell(c).value;
+        const len = String(val ?? '').length;
+        if (len > colCharLengths[c - 1]) {
+          colCharLengths[c - 1] = Math.min(len, 35);
+        }
+      }
+    });
+
+    const totalChars = colCharLengths.reduce((sum, len) => sum + len, 0) || 1;
+    const colWidths = colCharLengths.map(len => {
+      const calculated = Math.floor((len / totalChars) * usableW);
+      return Math.max(calculated, 45);
+    });
+
+    // Normalize column widths to fit usableW
+    const totalAssigned = colWidths.reduce((a, b) => a + b, 0);
+    const scaleFactor = usableW / (totalAssigned || 1);
+    const finalColWidths = colWidths.map(w => Math.floor(w * scaleFactor));
+
     let page = pdf.addPage([pageW, pageH]);
     let y = pageH - MARGIN;
-    const writeText = (txt: string, x: number, size: number, f: any, color = rgb(0.07, 0.07, 0.07)) => {
-      page.drawText(String(txt).slice(0, 200), { x, y, size, font: f, color });
-    };
 
-    // Title
-    writeText(sheet.name || 'Sheet', MARGIN, TITLE_FONT_SIZE, bold, rgb(0.13, 0.13, 0.13));
-    y -= TITLE_FONT_SIZE + 8;
-    writeText(`Rows: ${sheet.rowCount}, Cols: ${sheet.columnCount}`, MARGIN, FONT_SIZE, font, rgb(0.4, 0.4, 0.4));
-    y -= FONT_SIZE + 12;
+    // Header banner
+    page.drawText(sheet.name || 'Sheet', {
+      x: MARGIN,
+      y,
+      size: TITLE_FONT_SIZE,
+      font: bold,
+      color: rgb(0.1, 0.15, 0.25),
+    });
+    y -= TITLE_FONT_SIZE + 6;
 
-    // Compute a column width budget.
-    const cols = Math.min(sheet.columnCount || 0, maxCols);
-    if (cols === 0) continue;
-    const colWidth = Math.max(40, Math.floor(usableW / cols));
+    page.drawText(`Rows: ${sheet.rowCount}  |  Columns: ${cols}  |  Exported from BeforeYouSign`, {
+      x: MARGIN,
+      y,
+      size: 8,
+      font,
+      color: rgb(0.45, 0.5, 0.55),
+    });
+    y -= 14;
 
-    // Iterate rows.
-    let rowCount = 0;
+    let rowIdx = 0;
     sheet.eachRow({ includeEmpty: false }, (row, rowNumber) => {
-      if (rowCount >= maxRows) return false;
-      if (y < MARGIN + ROW_HEIGHT) {
+      if (rowIdx >= maxRows) return false;
+
+      // Page break check
+      if (y < MARGIN + ROW_HEIGHT + 10) {
         page = pdf.addPage([pageW, pageH]);
-        y = pageH - MARGIN;
+        y = pageH - MARGIN - 10;
       }
-      let x = MARGIN;
-      // Headers (only on first row, as a header band).
-      if (rowCount === 0) {
+
+      const isHeader = rowIdx === 0;
+
+      // Background fill
+      if (isHeader) {
         page.drawRectangle({
-          x: MARGIN, y: y - 4,
-          width: usableW, height: ROW_HEIGHT,
-          color: rgb(0.93, 0.93, 0.93),
+          x: MARGIN,
+          y: y - 3,
+          width: usableW,
+          height: ROW_HEIGHT,
+          color: rgb(0.12, 0.16, 0.24), // Dark Navy
+        });
+      } else if (rowIdx % 2 === 1) {
+        page.drawRectangle({
+          x: MARGIN,
+          y: y - 3,
+          width: usableW,
+          height: ROW_HEIGHT,
+          color: rgb(0.96, 0.97, 0.99), // Subtle light slate
         });
       }
+
+      // Draw row bottom border line
+      page.drawLine({
+        start: { x: MARGIN, y: y - 3 },
+        end: { x: MARGIN + usableW, y: y - 3 },
+        thickness: 0.5,
+        color: rgb(0.85, 0.88, 0.92),
+      });
+
+      let currentX = MARGIN;
       for (let c = 1; c <= cols; c += 1) {
-        const cell: any = row.getCell(c);
-        const value = cell?.value;
-        const text = value === null || value === undefined
-          ? ''
-          : typeof value === 'object'
-            ? (value.text ?? value.result ?? value.richText?.[0]?.text ?? JSON.stringify(value))
-            : String(value);
-        const f = rowCount === 0 ? bold : font;
-        page.drawText(text.slice(0, Math.floor((colWidth - COL_PADDING) / (FONT_SIZE * 0.55))), {
-          x: x + COL_PADDING / 2, y, size: FONT_SIZE, font: f, color: rgb(0.07, 0.07, 0.07),
-        });
-        x += colWidth;
+        const cWidth = finalColWidths[c - 1] || 50;
+        const cell = row.getCell(c);
+        const val = cell.value;
+        let rawText = '';
+        if (val !== null && val !== undefined) {
+          if (val instanceof Date) {
+            rawText = val.toLocaleDateString();
+          } else if (typeof val === 'object') {
+            const obj = val as Record<string, any>;
+            if (typeof obj.text === 'string') {
+              rawText = obj.text;
+            } else if (obj.result !== undefined && obj.result !== null) {
+              rawText = String(obj.result);
+            } else if (Array.isArray(obj.richText)) {
+              rawText = obj.richText.map((item: any) => item?.text || '').join('');
+            } else {
+              rawText = String(val);
+            }
+          } else {
+            rawText = String(val);
+          }
+        }
+
+        const maxChars = Math.max(3, Math.floor((cWidth - 6) / 5.2));
+        const displayText = rawText.length > maxChars
+          ? rawText.slice(0, maxChars - 1) + '…'
+          : rawText;
+
+        const cellFont = isHeader ? bold : font;
+        const textColor = isHeader
+          ? rgb(1, 1, 1)
+          : rgb(0.1, 0.12, 0.15);
+
+        if (displayText) {
+          page.drawText(displayText, {
+            x: currentX + 3,
+            y: y + 2,
+            size: isHeader ? HEADER_FONT_SIZE : FONT_SIZE,
+            font: cellFont,
+            color: textColor,
+          });
+        }
+
+        currentX += cWidth;
       }
+
       y -= ROW_HEIGHT;
-      rowCount += 1;
+      rowIdx += 1;
       return true;
     });
   }

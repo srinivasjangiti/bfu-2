@@ -5,17 +5,48 @@ import { safeDownload } from '@/lib/download-utils';
 interface ResultCardProps {
   tool: PDFTool;
   blob: Blob;
+  serverFilename?: string;
   onReset: () => void;
   onProcessAnother: () => void;
 }
 
-export function ResultCard({ tool, blob, onReset, onProcessAnother }: ResultCardProps) {
-  
+export function resolveDownloadFilename(tool: PDFTool, blob: Blob, serverFilename?: string): string {
+  if (serverFilename && serverFilename.includes('.')) {
+    return serverFilename;
+  }
+
+  let ext = 'pdf';
+  const expected = (tool.metadata?.expectedOutput || '').toUpperCase();
+  const toolId = tool.id.toLowerCase();
+
+  if (expected.includes('DOCX') || toolId.includes('to-word')) {
+    ext = 'docx';
+  } else if (expected.includes('XLSX') || toolId.includes('to-excel')) {
+    ext = 'xlsx';
+  } else if (expected.includes('PPTX') || toolId.includes('to-powerpoint')) {
+    ext = 'pptx';
+  } else if (expected.includes('ZIP') || toolId.includes('to-jpg') || toolId.includes('extract-images')) {
+    ext = 'zip';
+  } else if (expected.includes('TXT') || toolId.includes('extract-text') || toolId.includes('ocr')) {
+    ext = 'txt';
+  } else if (blob.type) {
+    if (blob.type.includes('wordprocessingml')) ext = 'docx';
+    else if (blob.type.includes('spreadsheetml')) ext = 'xlsx';
+    else if (blob.type.includes('presentationml')) ext = 'pptx';
+    else if (blob.type.includes('zip')) ext = 'zip';
+    else if (blob.type.includes('text/plain')) ext = 'txt';
+    else if (blob.type.includes('pdf')) ext = 'pdf';
+  }
+
+  const prefix = tool.capabilities?.api?.downloadFilenamePrefix || 'converted';
+  return `${prefix}-${Date.now()}.${ext}`;
+}
+
+export function ResultCard({ tool, blob, serverFilename, onReset, onProcessAnother }: ResultCardProps) {
+  const resolvedFilename = resolveDownloadFilename(tool, blob, serverFilename);
+
   const handleDownload = () => {
-    // Determine extension based on metadata or hardcode to tool output
-    const ext = tool.id === 'pdf-to-jpg' ? 'zip' : 'pdf';
-    const prefix = tool.capabilities?.api?.downloadFilenamePrefix || 'output';
-    safeDownload(blob, `${prefix}-${Date.now()}.${ext}`);
+    safeDownload(blob, resolvedFilename);
   };
 
   const formatSize = (bytes: number) => {
@@ -31,11 +62,14 @@ export function ResultCard({ tool, blob, onReset, onProcessAnother }: ResultCard
       </div>
       
       <h3 className="text-2xl font-bold text-stone-900 mb-2">Success!</h3>
-      <p className="text-stone-600 mb-8 font-medium">
-        Your file has been successfully processed.
-        <br/>
-        <span className="text-sm font-normal text-stone-400">Size: {formatSize(blob.size)}</span>
+      <p className="text-stone-600 mb-2 font-medium">
+        Your file has been successfully converted to <span className="font-bold text-stone-900">{tool.metadata.expectedOutput || 'document'}</span>.
       </p>
+      <div className="inline-flex items-center gap-2 bg-stone-100 border border-stone-200 px-3 py-1 rounded-full text-xs font-mono text-stone-700 mb-6">
+        <span>📄 {resolvedFilename}</span>
+        <span className="text-stone-400">•</span>
+        <span>{formatSize(blob.size)}</span>
+      </div>
 
       <div className="flex flex-col gap-4 max-w-sm mx-auto">
         <button 

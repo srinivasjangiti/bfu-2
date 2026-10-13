@@ -83,7 +83,9 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
   const pdf = await PDFDocument.create();
   const font = await pdf.embedFont(StandardFonts.Helvetica);
   const bold = await pdf.embedFont(StandardFonts.HelveticaBold);
-  const [pageW, pageH] = PageSizes.Letter;
+  // Landscape slide deck: 792 x 612
+  const pageW = PageSizes.Letter[1];
+  const pageH = PageSizes.Letter[0];
   const usableW = pageW - 2 * MARGIN;
 
   const writeWrapped = (text: string, x: number, y: number, size: number, max: number, f: any): number => {
@@ -95,45 +97,85 @@ export const POST = withErrorHandler(async (req: NextRequest) => {
       if (f.widthOfTextAtSize(trial, size) > max) {
         if (line.length > 0) {
           const page = pdf.getPages()[pdf.getPageCount() - 1];
-          page.drawText(line, { x, y: cy, size, font: f, color: rgb(0.1, 0.1, 0.1) });
+          page.drawText(line, { x, y: cy, size, font: f, color: rgb(0.15, 0.18, 0.22) });
           cy -= LINE_HEIGHT;
           line = w;
         }
-        if (cy < MARGIN) return cy;
+        if (cy < MARGIN + 20) return cy;
       } else {
         line = trial;
       }
     }
-    if (line.length > 0 && cy >= MARGIN) {
+    if (line.length > 0 && cy >= MARGIN + 20) {
       const page = pdf.getPages()[pdf.getPageCount() - 1];
-      page.drawText(line, { x, y: cy, size, font: f, color: rgb(0.1, 0.1, 0.1) });
+      page.drawText(line, { x, y: cy, size, font: f, color: rgb(0.15, 0.18, 0.22) });
       cy -= LINE_HEIGHT;
     }
     return cy;
   };
 
-  for (let i = 0; i < slideFiles.length; i += 1) {
+  const totalSlides = slideFiles.length;
+  for (let i = 0; i < totalSlides; i += 1) {
     const slideXml = await zip.files[slideFiles[i]].async('string');
     const { title, bullets } = extractText(slideXml);
     const page = pdf.addPage([pageW, pageH]);
-    let y = pageH - MARGIN;
-    if (title) {
-      page.drawText(`Slide ${i + 1}: ${title.slice(0, 80)}`, {
-        x: MARGIN, y, size: TITLE_SIZE, font: bold, color: rgb(0.07, 0.07, 0.07),
-      });
-      y -= TITLE_SIZE + 12;
-    } else {
-      page.drawText(`Slide ${i + 1}`, {
-        x: MARGIN, y, size: TITLE_SIZE, font: bold, color: rgb(0.07, 0.07, 0.07),
-      });
-      y -= TITLE_SIZE + 12;
-    }
+
+    // Top accent bar
+    page.drawRectangle({
+      x: 0,
+      y: pageH - 6,
+      width: pageW,
+      height: 6,
+      color: rgb(0.12, 0.35, 0.85),
+    });
+
+    let y = pageH - MARGIN - 10;
+    const slideTitle = title || `Slide ${i + 1}`;
+    page.drawText(slideTitle.slice(0, 90), {
+      x: MARGIN,
+      y,
+      size: TITLE_SIZE,
+      font: bold,
+      color: rgb(0.08, 0.12, 0.2),
+    });
+
+    // Subtle divider under title
+    y -= 14;
+    page.drawLine({
+      start: { x: MARGIN, y },
+      end: { x: pageW - MARGIN, y },
+      thickness: 1,
+      color: rgb(0.88, 0.9, 0.93),
+    });
+    y -= 24;
+
     for (const b of bullets) {
-      if (y < MARGIN + LINE_HEIGHT) break;
-      // Bullet marker
-      page.drawText('•', { x: MARGIN, y, size: FONT_SIZE, font, color: rgb(0.3, 0.3, 0.3) });
-      y = writeWrapped(b, MARGIN + 16, y, FONT_SIZE, usableW - 16, font) - 4;
+      if (y < MARGIN + 30) break;
+      // Bullet dot
+      page.drawCircle({
+        x: MARGIN + 6,
+        y: y + 4,
+        size: 3,
+        color: rgb(0.12, 0.35, 0.85),
+      });
+      y = writeWrapped(b, MARGIN + 20, y, FONT_SIZE, usableW - 20, font) - 8;
     }
+
+    // Slide footer
+    page.drawText(`Slide ${i + 1} of ${totalSlides}`, {
+      x: pageW - MARGIN - 80,
+      y: 20,
+      size: 10,
+      font,
+      color: rgb(0.55, 0.6, 0.68),
+    });
+    page.drawText('Converted with BeforeYouSign', {
+      x: MARGIN,
+      y: 20,
+      size: 9,
+      font,
+      color: rgb(0.65, 0.7, 0.76),
+    });
   }
 
   const out = await pdf.save();
