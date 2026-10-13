@@ -141,8 +141,8 @@ export interface ContractRefinement {
  * the 60s request budget. Going higher risks Vercel's 90s function cap
  * (see vercel.json) and yields truncated JSON the parser has to repair.
  */
-const DRAFT_MAX_TOKENS = 8000;
-const DRAFT_TEMPERATURE = 0.5;
+const DRAFT_MAX_TOKENS = 3500;
+const DRAFT_TEMPERATURE = 0.4;
 
 export class AIContractDrafter {
   private conversationHistory: Array<{ role: 'user' | 'assistant'; content: string }> = [];
@@ -166,7 +166,7 @@ export class AIContractDrafter {
       DRAFT_TEMPERATURE,
       DRAFT_MAX_TOKENS,
       undefined,
-      true, // enable JSON mode so model returns structured JSON directly
+      false, // avoid NIM json_object mode bug that can produce empty content
     );
 
     const draft = this.parseContractDraft(response, request);
@@ -213,7 +213,7 @@ Output format (JSON only):
       0.5,
       DRAFT_MAX_TOKENS,
       undefined,
-      true,
+      false,
     );
 
     const refined = parseJsonResponse<{ fullText: string }>(response);
